@@ -102,17 +102,17 @@ VERSION_ID=8357756
 CLEAN_MODPACK_FILES=true
 ```
 
-Dann im Server:
+Dann im Pterodactyl-Adminbereich den Server mit diesem Egg erstellen und auf **Create Server** klicken.
 
-```text
-Settings → Reinstall Server
-```
-
-Das Egg lädt `server.zip`, entpackt die ServerFiles, installiert NeoForge und setzt `unix_args.txt`. Nach erfolgreicher Installation startet Pterodactyl den Server in der Regel automatisch mit dem konfigurierten Startup Command.
+Pterodactyl startet danach automatisch die Installation. Das Egg lädt `server.zip`, entpackt die ServerFiles, installiert NeoForge und setzt `unix_args.txt`. Nach erfolgreicher Installation startet Pterodactyl den Server automatisch mit dem konfigurierten Startup Command.
 
 ## Update / Reinstall
 
 Für Updates neue **ServerFiles File ID** bei `VERSION_ID` eintragen und danach Reinstall ausführen.
+
+```text
+Settings → Reinstall Server
+```
 
 Bei `CLEAN_MODPACK_FILES=true` wird vorher gesichert:
 
@@ -190,4 +190,4 @@ Linking libraries/net/neoforged/neoforge/.../unix_args.txt -> unix_args.txt
 Install completed successfully
 ```
 
-Danach sollte Pterodactyl den Server automatisch starten. Falls nicht, im Panel manuell **Start** drücken.
+Danach startet Pterodactyl den Server automatisch. Falls nicht, im Panel manuell **Start** drücken.
