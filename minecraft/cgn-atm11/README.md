@@ -108,7 +108,7 @@ Dann im Server:
 Settings → Reinstall Server
 ```
 
-Das Egg lädt `server.zip`, entpackt die ServerFiles, installiert NeoForge und setzt `unix_args.txt`.
+Das Egg lädt `server.zip`, entpackt die ServerFiles, installiert NeoForge und setzt `unix_args.txt`. Nach erfolgreicher Installation startet Pterodactyl den Server in der Regel automatisch mit dem konfigurierten Startup Command.
 
 ## Update / Reinstall
 
@@ -189,3 +189,5 @@ The server installed successfully
 Linking libraries/net/neoforged/neoforge/.../unix_args.txt -> unix_args.txt
 Install completed successfully
 ```
+
+Danach sollte Pterodactyl den Server automatisch starten. Falls nicht, im Panel manuell **Start** drücken.
