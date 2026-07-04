@@ -1,0 +1,76 @@
+{
+    "_comment": "CGN ATM11 custom Egg - serverpack install/update; no hardcoded latest fallback.",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": null
+    },
+    "exported_at": "2026-07-04T12:58:00+00:00",
+    "name": "CGN-ATM 11",
+    "author": "forrestcgn@local",
+    "description": "CGN - ATM11 - Projekt",
+    "features": [
+        "eula",
+        "java_version",
+        "pid_limit"
+    ],
+    "docker_images": {
+        "Java 25": "ghcr.io/ptero-eggs/yolks:java_25"
+    },
+    "file_denylist": [],
+    "startup": "java $([[ -f user_jvm_args.txt ]] && printf %s \"@user_jvm_args.txt\") -Xms128M -Xmx{{SERVER_MEMORY}}M -Dterminal.jline=false -Dterminal.ansi=true @unix_args.txt nogui",
+    "config": {
+        "files": "{\r\n    \"server.properties\": {\r\n        \"parser\": \"properties\",\r\n        \"find\": {\r\n            \"server-ip\": \"0.0.0.0\",\r\n            \"server-port\": \"{{server.build.default.port}}\",\r\n            \"query.port\": \"{{server.build.default.port}}\"\r\n        }\r\n    }\r\n}",
+        "startup": "{\r\n    \"done\": \")! For help, type \"\r\n}",
+        "logs": "{}",
+        "stop": "stop"
+    },
+    "scripts": {
+        "installation": {
+            "script": "#!/bin/bash\nset -Eeuo pipefail\n\ncd /mnt/server\n\nlog() { echo \"        $*\" >&2; }\nfail() { echo \"        ERROR: $*\" >&2; exit 1; }\n\nPROJECT_ID=\"${PROJECT_ID:-1148445}\"\nVERSION_ID=\"${VERSION_ID:-latest}\"\nAPI_KEY=\"${API_KEY:-}\"\nCLEAN_MODPACK_FILES=\"${CLEAN_MODPACK_FILES:-true}\"\nCF_API=\"https://api.curseforge.com/v1\"\nSERVER_ZIP=\"server.zip\"\n\nlog \"CGN ATM11 installer starting\"\nlog \"PROJECT_ID=${PROJECT_ID}\"\nlog \"VERSION_ID=${VERSION_ID}\"\nlog \"CLEAN_MODPACK_FILES=${CLEAN_MODPACK_FILES}\"\n\nlog \"Installing required packages...\"\nexport DEBIAN_FRONTEND=noninteractive\napt-get update -y\napt-get install -y --no-install-recommends curl jq unzip ca-certificates\nlog \"Required packages installed\"\n\napi_get() {\n    local url=\"$1\"\n    [[ -n \"${API_KEY}\" ]] || fail \"CurseForge API key is missing\"\n    curl -fsSL --retry 3 --retry-delay 2 \\\n        -H \"Accept: application/json\" \\\n        -H \"x-api-key: ${API_KEY}\" \\\n        \"$url\"\n}\n\ndownload_file_id() {\n    local file_id=\"$1\"\n    [[ -n \"$file_id\" ]] || fail \"download_file_id called without file id\"\n    log \"Resolving CurseForge download URL for file id ${file_id}\"\n    local url\n    url=\"$(api_get \"${CF_API}/mods/${PROJECT_ID}/files/${file_id}/download-url\" | jq -r '.data // empty')\"\n    [[ -n \"$url\" && \"$url\" != \"null\" ]] || fail \"No download URL returned for file id ${file_id}\"\n    log \"Downloading ${url}\"\n    curl -fL --retry 3 --retry-delay 2 \"$url\" -o \"${SERVER_ZIP}\"\n    log \"Downloaded ${SERVER_ZIP} ($(du -h \"${SERVER_ZIP}\" | awk '{print $1}'))\"\n}\n\nselect_latest_serverpack() {\n    log \"Searching latest server pack for project ${PROJECT_ID}\"\n    local files_json selected main_file server_pack\n    files_json=\"$(api_get \"${CF_API}/mods/${PROJECT_ID}/files?pageSize=50\")\"\n\n    selected=\"$(jq -r '\n      [.data[]\n        | select((.isAvailable // true) == true)\n        | select(\n            ((.isServerPack // false) == true)\n            or ((.displayName // \"\") | test(\"server[ -_]*files|server[ -_]*pack|server\"; \"i\"))\n            or ((.fileName // \"\") | test(\"server[ -_]*files|server[ -_]*pack|server\"; \"i\"))\n          )\n      ]\n      | sort_by(.fileDate // \"\")\n      | reverse\n      | .[0].id // empty\n    ' <<< \"$files_json\")\"\n\n    if [[ -n \"$selected\" && \"$selected\" != \"null\" ]]; then\n        log \"Selected latest server-pack-like file id: ${selected}\"\n        printf '%s\\n' \"$selected\"\n        return 0\n    fi\n\n    log \"No server-pack-like file found in file list; checking main file metadata\"\n    main_file=\"$(api_get \"${CF_API}/mods/${PROJECT_ID}\" | jq -r '.data.mainFileId // empty')\"\n    [[ -n \"$main_file\" && \"$main_file\" != \"null\" ]] || fail \"Could not determine main file id\"\n\n    server_pack=\"$(api_get \"${CF_API}/mods/${PROJECT_ID}/files/${main_file}\" | jq -r '.data.serverPackFileId // empty')\"\n    if [[ -n \"$server_pack\" && \"$server_pack\" != \"null\" ]]; then\n        log \"Selected serverPackFileId from main file metadata: ${server_pack}\"\n        printf '%s\\n' \"$server_pack\"\n        return 0\n    fi\n\n    fail \"Could not find a latest server pack. Set VERSION_ID to the ServerFiles file id manually.\"\n}\n\narchive_has() {\n    local pattern=\"$1\"\n    unzip -Z1 \"${SERVER_ZIP}\" | grep -Eiq \"$pattern\"\n}\n\nbackup_and_clean_pack_files() {\n    local enabled=\"$(printf '%s' \"${CLEAN_MODPACK_FILES}\" | tr '[:upper:]' '[:lower:]')\"\n    if [[ \"$enabled\" != \"true\" && \"$enabled\" != \"1\" && \"$enabled\" != \"yes\" ]]; then\n        log \"Update clean disabled; keeping existing files before unpack\"\n        return 0\n    fi\n\n    local backup_dir=\"backups/cgn-atm11-update-$(date +%Y%m%d-%H%M%S)\"\n    log \"Update clean enabled; backing up protected server data to ${backup_dir}\"\n    mkdir -p \"$backup_dir\"\n\n    local item\n    for item in world server.properties eula.txt ops.json whitelist.json banned-players.json banned-ips.json usercache.json journeymap; do\n        if [[ -e \"$item\" ]]; then\n            log \"Backing up ${item}\"\n            cp -a \"$item\" \"$backup_dir/\"\n        fi\n    done\n\n    log \"Removing pack-managed files for clean modpack update\"\n    rm -rf mods libraries config defaultconfigs kubejs local resourcepacks shaderpacks openloader patchouli_books\n    rm -f run.sh run.bat startserver.sh startserver.bat unix_args.txt win_args.txt user_jvm_args.txt\n    rm -f neoforge-*-installer.jar forge-*-installer.jar minecraft_server*.jar server.jar\n}\n\nrestore_protected_data() {\n    local enabled=\"$(printf '%s' \"${CLEAN_MODPACK_FILES}\" | tr '[:upper:]' '[:lower:]')\"\n    if [[ \"$enabled\" != \"true\" && \"$enabled\" != \"1\" && \"$enabled\" != \"yes\" ]]; then\n        return 0\n    fi\n\n    local backup_dir\n    backup_dir=\"$(ls -dt backups/cgn-atm11-update-* 2>/dev/null | head -n 1 || true)\"\n    [[ -n \"$backup_dir\" ]] || return 0\n\n    log \"Restoring protected server data after unpack\"\n    local item base\n    for item in \"$backup_dir\"/*; do\n        [[ -e \"$item\" ]] || continue\n        base=\"$(basename \"$item\")\"\n        rm -rf \"$base\"\n        cp -a \"$item\" ./\n    done\n}\n\nmaybe_replace_client_zip_with_serverpack() {\n    if ! archive_has '(^|/)manifest\\.json$'; then\n        return 0\n    fi\n\n    log \"Archive contains manifest.json; this is a CurseForge client pack\"\n\n    if [[ \"${PROJECT_ID}\" == \"zip\" ]]; then\n        fail \"Uploaded server.zip is a client pack. Upload the ServerFiles ZIP instead.\"\n    fi\n\n    local lookup_id file_json server_pack\n    lookup_id=\"${VERSION_ID}\"\n    if [[ -z \"$lookup_id\" || \"$lookup_id\" == \"latest\" ]]; then\n        lookup_id=\"$(api_get \"${CF_API}/mods/${PROJECT_ID}\" | jq -r '.data.mainFileId // empty')\"\n    fi\n\n    if [[ -n \"$lookup_id\" && \"$lookup_id\" != \"null\" ]]; then\n        file_json=\"$(api_get \"${CF_API}/mods/${PROJECT_ID}/files/${lookup_id}\")\"\n        server_pack=\"$(jq -r '.data.serverPackFileId // empty' <<< \"$file_json\")\"\n        if [[ -n \"$server_pack\" && \"$server_pack\" != \"null\" ]]; then\n            log \"Client file references serverPackFileId ${server_pack}; downloading server pack instead\"\n            rm -f \"${SERVER_ZIP}\"\n            download_file_id \"$server_pack\"\n            return 0\n        fi\n    fi\n\n    fail \"Downloaded archive is a client pack and no serverPackFileId was available. Use VERSION_ID of the ServerFiles ZIP.\"\n}\n\ninstall_serverpack_zip() {\n    [[ -f \"${SERVER_ZIP}\" ]] || fail \"${SERVER_ZIP} does not exist\"\n\n    log \"Testing ${SERVER_ZIP}\"\n    unzip -tq \"${SERVER_ZIP}\" || fail \"${SERVER_ZIP} is not a valid ZIP archive\"\n\n    maybe_replace_client_zip_with_serverpack\n\n    log \"Checking archive type\"\n    if archive_has '(^|/)manifest\\.json$'; then\n        fail \"Archive still contains manifest.json; refusing to install client pack as server pack\"\n    fi\n\n    backup_and_clean_pack_files\n\n    log \"No manifest.json found; treating archive as server-pack candidate\"\n    log \"Unpacking ${SERVER_ZIP}\"\n    unzip -oq \"${SERVER_ZIP}\"\n\n    restore_protected_data\n\n    local installer\n    installer=\"$(find . -maxdepth 4 -type f -iname 'neoforge-*-installer.jar' | sort -V | tail -n 1 || true)\"\n    [[ -n \"$installer\" ]] || fail \"No neoforge-*-installer.jar found after unpacking; archive is not an ATM11/NeoForge server pack\"\n\n    log \"Installing NeoForge using ${installer}\"\n    java -jar \"$installer\" --installServer\n\n    local unix_args\n    unix_args=\"$(find ./libraries -type f -path '*/net/neoforged/neoforge/*/unix_args.txt' | sort -V | tail -n 1 || true)\"\n    [[ -n \"$unix_args\" ]] || fail \"NeoForge installed, but unix_args.txt was not found\"\n\n    log \"Linking ${unix_args#./} -> unix_args.txt\"\n    ln -sf \"${unix_args#./}\" unix_args.txt\n\n    if [[ ! -f eula.txt ]]; then\n        echo \"eula=true\" > eula.txt\n    fi\n    log \"Install completed successfully\"\n}\n\nif [[ \"${PROJECT_ID}\" == \"zip\" ]]; then\n    log \"PROJECT_ID=zip selected; using existing ${SERVER_ZIP}\"\nelse\n    [[ -n \"${API_KEY}\" ]] || fail \"API_KEY is required unless PROJECT_ID=zip\"\n    rm -f \"${SERVER_ZIP}\"\n    if [[ -z \"${VERSION_ID}\" || \"${VERSION_ID}\" == \"latest\" ]]; then\n        selected_id=\"$(select_latest_serverpack)\"\n        download_file_id \"$selected_id\"\n    else\n        download_file_id \"${VERSION_ID}\"\n    fi\nfi\n\ninstall_serverpack_zip\n",
+            "container": "eclipse-temurin:25-jdk-jammy",
+            "entrypoint": "bash"
+        }
+    },
+    "variables": [
+        {
+            "name": "ATM11 CurseForge Project ID",
+            "description": "ATM11 CurseForge project ID. Default is 1148445. Use zip only if you upload server.zip manually.",
+            "env_variable": "PROJECT_ID",
+            "default_value": "1148445",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string",
+            "field_type": "text"
+        },
+        {
+            "name": "ATM11 File ID / latest",
+            "description": "Use latest to auto-select the newest ServerFiles/server-pack-like file. Or enter a specific ServerFiles file ID such as 8357756.",
+            "env_variable": "VERSION_ID",
+            "default_value": "latest",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "string",
+            "field_type": "text"
+        },
+        {
+            "name": "CurseForge API Key",
+            "description": "CurseForge API key. Required unless PROJECT_ID=zip with an uploaded server.zip.",
+            "env_variable": "API_KEY",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|max:60",
+            "field_type": "text"
+        },
+        {
+            "name": "Clean Modpack Files On Reinstall",
+            "description": "true = backup protected server data and rebuild pack-managed folders before unpacking. Recommended for updates.",
+            "env_variable": "CLEAN_MODPACK_FILES",
+            "default_value": "true",
+            "user_viewable": true,
+            "user_editable": true,
+            "rules": "required|string|in:true,false,1,0,yes,no",
+            "field_type": "text"
+        }
+    ]
+}
